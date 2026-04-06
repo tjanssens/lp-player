@@ -462,6 +462,35 @@
 
     // ── Spotify Search + Play + Tracklist ────────────────────────────────────
 
+    async function getDevices(token) {
+      const resp = await fetch("https://api.spotify.com/v1/me/player/devices", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await resp.json();
+      return (data.devices || []).filter(d => !d.is_restricted);
+    }
+
+    async function playOnDevice(token, body, deviceId) {
+      const url = deviceId
+        ? `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`
+        : "https://api.spotify.com/v1/me/player/play";
+      const resp = await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok && resp.status !== 204) {
+        const errData = await resp.json().catch(() => ({}));
+        if (resp.status === 404) {
+          throw new Error("Geen actief Spotify device. Open Spotify op een apparaat.");
+        }
+        throw new Error(errData.error?.message || `Spotify fout ${resp.status}`);
+      }
+    }
+
     async function searchAndPlay(albumName, artist) {
       const token = await getSpotifyToken();
       if (!token) throw new Error("Spotify niet verbonden");
@@ -475,22 +504,13 @@
       const album = searchData.albums?.items?.[0];
       if (!album) throw new Error("Album niet gevonden op Spotify");
 
-      const playResp = await fetch("https://api.spotify.com/v1/me/player/play", {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ context_uri: album.uri }),
-      });
-
-      if (!playResp.ok && playResp.status !== 204) {
-        const errData = await playResp.json().catch(() => ({}));
-        if (playResp.status === 404) {
-          throw new Error("Geen actief Spotify device. Open Spotify op een apparaat.");
-        }
-        throw new Error(errData.error?.message || `Spotify fout ${playResp.status}`);
+      // Haal devices op en kies een niet-restricted device
+      const devices = await getDevices(token);
+      if (devices.length === 0) {
+        throw new Error("Geen beschikbaar Spotify device. Open Spotify op een apparaat.");
       }
+      const device = devices.find(d => d.is_active) || devices[0];
+      await playOnDevice(token, { context_uri: album.uri }, device.id);
 
       const tracksResp = await fetch(
         `https://api.spotify.com/v1/albums/${album.id}/tracks?limit=50`,
@@ -545,21 +565,12 @@
       if (!token) return;
 
       try {
-        const resp = await fetch("https://api.spotify.com/v1/me/player/play", {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ context_uri: albumUri, offset: { position: offset } }),
-        });
-
-        if (resp.ok || resp.status === 204) {
-          document.querySelectorAll(".track.active").forEach(t => t.classList.remove("active"));
-          el.classList.add("active");
-        } else if (resp.status === 404) {
-          document.getElementById("status").innerHTML = '<span class="error">Geen actief Spotify device gevonden.</span>';
-        }
+        const devices = await getDevices(token);
+        const device = devices.find(d => d.is_active) || devices[0];
+        if (!device) throw new Error("Geen beschikbaar Spotify device.");
+        await playOnDevice(token, { context_uri: albumUri, offset: { position: offset } }, device.id);
+        document.querySelectorAll(".track.active").forEach(t => t.classList.remove("active"));
+        el.classList.add("active");
       } catch (err) {
         document.getElementById("status").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
       }
