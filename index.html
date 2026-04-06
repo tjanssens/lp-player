@@ -484,11 +484,12 @@
         body: JSON.stringify({ context_uri: album.uri }),
       });
 
-      if (playResp.status === 404) {
-        throw new Error("Geen actief Spotify device. Open Spotify op een apparaat.");
-      }
       if (!playResp.ok && playResp.status !== 204) {
-        throw new Error("Kon niet afspelen op Spotify");
+        const errData = await playResp.json().catch(() => ({}));
+        if (playResp.status === 404) {
+          throw new Error("Geen actief Spotify device. Open Spotify op een apparaat.");
+        }
+        throw new Error(errData.error?.message || `Spotify fout ${playResp.status}`);
       }
 
       const tracksResp = await fetch(
