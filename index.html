@@ -152,6 +152,10 @@
 
     const app = document.getElementById("app");
 
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
     // ── State Router ─────────────────────────────────────────────────────────
 
     function getState() {
@@ -173,7 +177,7 @@
       app.innerHTML = `
         <div class="card">
           <h1>LP Player</h1>
-          <p>Voer je Anthropic API key in om te starten.</p>
+          <p>Voer je Anthropic API key in. Je key wordt lokaal opgeslagen en alleen naar api.anthropic.com gestuurd.</p>
           <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off">
           <button id="save-key">Opslaan</button>
         </div>
@@ -335,17 +339,23 @@
     }
 
     function resizeAndEncode(file, maxWidth) {
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
         const img = new Image();
+        const url = URL.createObjectURL(file);
         img.onload = () => {
           const canvas = document.createElement("canvas");
           const scale = Math.min(1, maxWidth / img.width);
           canvas.width = img.width * scale;
           canvas.height = img.height * scale;
           canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(url);
           resolve(canvas.toDataURL("image/jpeg", 0.8).split(",")[1]);
         };
-        img.src = URL.createObjectURL(file);
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("Afbeelding kon niet worden geladen"));
+        };
+        img.src = url;
       });
     }
 
@@ -380,6 +390,10 @@
         }),
       });
       const data = await resp.json();
+      if (!resp.ok) {
+        const msg = data.error?.message || `API fout ${resp.status}`;
+        throw new Error(msg);
+      }
       const text = data.content?.[0]?.text || "";
       try {
         const parsed = JSON.parse(text);
@@ -441,8 +455,8 @@
         <div class="album-card">
           ${img ? `<img src="${img}" alt="">` : ""}
           <div class="info">
-            <h2>${album.name}</h2>
-            <p>${album.artists.map(a => a.name).join(", ")}</p>
+            <h2>${escapeHtml(album.name)}</h2>
+            <p>${album.artists.map(a => escapeHtml(a.name)).join(", ")}</p>
             <p class="playing">Nu aan het spelen</p>
           </div>
         </div>
@@ -450,22 +464,22 @@
           ${tracks.map((t, i) => `
             <li class="track${i === 0 ? " active" : ""}" data-uri="${t.uri}" data-album-uri="${album.uri}" data-offset="${i}">
               <span class="track-nr">${t.track_number}</span>
-              <span class="track-name">${t.name}</span>
+              <span class="track-name">${escapeHtml(t.name)}</span>
               <span class="track-dur">${formatDuration(t.duration_ms)}</span>
             </li>
           `).join("")}
         </ul>
-        <label class="capture-btn new-photo" for="photo">
+        <label class="capture-btn new-photo" for="photo-new">
           <span>Andere plaat</span>
         </label>
-        <input type="file" id="photo" accept="image/*" capture="environment" hidden>
+        <input type="file" id="photo-new" accept="image/*" capture="environment" hidden>
       `;
 
       result.querySelectorAll(".track").forEach(el => {
         el.onclick = () => playTrack(el.dataset.albumUri, parseInt(el.dataset.offset), el);
       });
 
-      document.getElementById("photo").onchange = handlePhoto;
+      document.getElementById("photo-new").onchange = handlePhoto;
     }
 
     function formatDuration(ms) {
@@ -478,18 +492,24 @@
       const token = await getSpotifyToken();
       if (!token) return;
 
-      const resp = await fetch("https://api.spotify.com/v1/me/player/play", {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ context_uri: albumUri, offset: { position: offset } }),
-      });
+      try {
+        const resp = await fetch("https://api.spotify.com/v1/me/player/play", {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ context_uri: albumUri, offset: { position: offset } }),
+        });
 
-      if (resp.ok || resp.status === 204) {
-        document.querySelectorAll(".track.active").forEach(t => t.classList.remove("active"));
-        el.classList.add("active");
+        if (resp.ok || resp.status === 204) {
+          document.querySelectorAll(".track.active").forEach(t => t.classList.remove("active"));
+          el.classList.add("active");
+        } else if (resp.status === 404) {
+          document.getElementById("status").innerHTML = '<span class="error">Geen actief Spotify device gevonden.</span>';
+        }
+      } catch (err) {
+        document.getElementById("status").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
       }
     }
 
