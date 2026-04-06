@@ -150,7 +150,11 @@
     const SPOTIFY_CLIENT_ID = "b5fe2dcf3e4b42d59f1123b54461c670";
     const SPOTIFY_REDIRECT_URI = location.origin + location.pathname;
     const SPOTIFY_SCOPES = "user-modify-playback-state user-read-playback-state";
-    const ANTHROPIC_MODEL = "claude-sonnet-4-5-20241022";
+    const DEFAULT_MODEL = "claude-sonnet-4-6";
+
+    function getModel() {
+      return localStorage.getItem("anthropic_model") || DEFAULT_MODEL;
+    }
 
     const app = document.getElementById("app");
 
@@ -161,7 +165,7 @@
     // ── State Router ─────────────────────────────────────────────────────────
 
     function getState() {
-      if (!localStorage.getItem("anthropic_key")) return "setup";
+      if (!localStorage.getItem("anthropic_key") || !localStorage.getItem("anthropic_model")) return "setup";
       if (!localStorage.getItem("spotify_access_token")) return "login";
       return "camera";
     }
@@ -176,19 +180,64 @@
     // ── Setup Screen ─────────────────────────────────────────────────────────
 
     function renderSetup() {
+      const savedKey = localStorage.getItem("anthropic_key") || "";
       app.innerHTML = `
         <div class="card">
           <h1>LP Player</h1>
           <p>Voer je Anthropic API key in. Je key wordt lokaal opgeslagen en alleen naar api.anthropic.com gestuurd.</p>
-          <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off">
-          <button id="save-key">Opslaan</button>
+          <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off" value="${escapeHtml(savedKey)}">
+          <div id="model-section" style="display:none; margin-bottom:1rem;">
+            <label style="display:block; color:#b3b3b3; font-size:0.85rem; margin-bottom:0.5rem; text-align:left;">Model</label>
+            <select id="model-select" style="width:100%; padding:12px; border-radius:8px; border:1px solid #333; background:#282828; color:#fff; font-size:0.9rem;"></select>
+          </div>
+          <button id="save-key">Volgende</button>
         </div>
       `;
-      document.getElementById("save-key").onclick = () => {
+      document.getElementById("save-key").onclick = async () => {
         const key = document.getElementById("api-key").value.trim();
         if (!key.startsWith("sk-ant-")) return alert("Ongeldige key");
         localStorage.setItem("anthropic_key", key);
-        render();
+
+        const select = document.getElementById("model-select");
+        if (select.options.length > 0) {
+          localStorage.setItem("anthropic_model", select.value);
+          render();
+          return;
+        }
+
+        const btn = document.getElementById("save-key");
+        btn.textContent = "Modellen ophalen...";
+        btn.disabled = true;
+
+        try {
+          const resp = await fetch("https://api.anthropic.com/v1/models", {
+            headers: {
+              "x-api-key": key,
+              "anthropic-version": "2023-06-01",
+              "anthropic-dangerous-direct-browser-access": "true",
+            },
+          });
+          if (!resp.ok) throw new Error("Ongeldige API key");
+          const data = await resp.json();
+          const models = (data.data || [])
+            .filter(m => m.id && !m.id.includes("claude-3-") && !m.id.includes("claude-2"))
+            .sort((a, b) => b.id.localeCompare(a.id));
+
+          if (models.length === 0) throw new Error("Geen modellen gevonden");
+
+          const section = document.getElementById("model-section");
+          section.style.display = "block";
+          select.innerHTML = models.map(m =>
+            `<option value="${escapeHtml(m.id)}"${m.id === DEFAULT_MODEL ? " selected" : ""}>${escapeHtml(m.display_name || m.id)}</option>`
+          ).join("");
+
+          btn.textContent = "Opslaan";
+          btn.disabled = false;
+        } catch (err) {
+          btn.textContent = "Volgende";
+          btn.disabled = false;
+          alert(err.message);
+        }
       };
     }
 
@@ -374,7 +423,7 @@
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          model: ANTHROPIC_MODEL,
+          model: getModel(),
           max_tokens: 200,
           messages: [{
             role: "user",
