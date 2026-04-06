@@ -141,6 +141,97 @@
       border-width: 1px;
     }
     .new-photo span { color: #fff; }
+    .settings-btn {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: none;
+      background: #282828;
+      color: #b3b3b3;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+    .settings-btn:active { background: #333; }
+    .settings-overlay {
+      position: fixed;
+      inset: 0;
+      background: #121212;
+      z-index: 20;
+      overflow-y: auto;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .settings-card {
+      background: #1e1e1e;
+      border-radius: 16px;
+      padding: 1.5rem;
+      width: min(90vw, 400px);
+      margin-bottom: 1rem;
+    }
+    .settings-card h2 {
+      font-size: 1rem;
+      margin-bottom: 1rem;
+      color: #b3b3b3;
+    }
+    .settings-card select,
+    .settings-card input {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #333;
+      background: #282828;
+      color: #fff;
+      font-size: 0.9rem;
+      margin-bottom: 0.75rem;
+    }
+    .settings-card .btn-sm {
+      width: 100%;
+      padding: 10px;
+      border-radius: 12px;
+      border: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-green { background: #1DB954; color: #fff; }
+    .btn-red { background: #e74c3c; color: #fff; }
+    .btn-gray { background: #333; color: #fff; }
+    .btn-sm:active { opacity: 0.8; }
+    .device-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-bottom: 4px;
+    }
+    .device-item:active { background: #282828; }
+    .device-item.selected { color: #1DB954; }
+    .device-item .device-name { font-size: 0.9rem; }
+    .device-item .device-type { font-size: 0.75rem; color: #b3b3b3; }
+    .play-pause {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: none;
+      background: #1DB954;
+      color: #000;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .play-pause:active { opacity: 0.8; }
   </style>
 </head>
 <body>
@@ -342,10 +433,194 @@
       return null;
     }
 
+    // ── Settings ─────────────────────────────────────────────────────────────
+
+    async function fetchModels(apiKey) {
+      const resp = await fetch("https://api.anthropic.com/v1/models", {
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+      });
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      return (data.data || [])
+        .filter(m => m.id && !m.id.includes("claude-3-") && !m.id.includes("claude-2"))
+        .sort((a, b) => b.id.localeCompare(a.id));
+    }
+
+    async function renderSettings() {
+      const apiKey = localStorage.getItem("anthropic_key") || "";
+      const currentModel = getModel();
+      const token = await getSpotifyToken();
+
+      let devicesHtml = '<p style="color:#b3b3b3; font-size:0.85rem;">Niet ingelogd op Spotify</p>';
+      if (token) {
+        const allDevices = await fetch("https://api.spotify.com/v1/me/player/devices", {
+          headers: { Authorization: `Bearer ${token}` },
+        }).then(r => r.json()).catch(() => ({ devices: [] }));
+        const devices = allDevices.devices || [];
+        const selectedDevice = localStorage.getItem("preferred_device") || "";
+        if (devices.length > 0) {
+          devicesHtml = devices.map(d => `
+            <div class="device-item${d.id === selectedDevice || (!selectedDevice && d.is_active) ? " selected" : ""}" data-device-id="${d.id}">
+              <div>
+                <div class="device-name">${escapeHtml(d.name)}${d.is_restricted ? ' <span style="color:#e74c3c; font-size:0.7rem;">(restricted)</span>' : ""}</div>
+                <div class="device-type">${escapeHtml(d.type)}</div>
+              </div>
+              ${d.id === selectedDevice || (!selectedDevice && d.is_active) ? '<span style="color:#1DB954;">&#10003;</span>' : ""}
+            </div>
+          `).join("");
+        } else {
+          devicesHtml = '<p style="color:#b3b3b3; font-size:0.85rem;">Geen devices gevonden. Open Spotify op een apparaat.</p>';
+        }
+      }
+
+      const overlay = document.createElement("div");
+      overlay.className = "settings-overlay";
+      overlay.innerHTML = `
+        <div style="width:min(90vw,400px); margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center;">
+          <h1 style="font-size:1.3rem;">Instellingen</h1>
+          <button class="btn-sm btn-gray" id="settings-close" style="width:auto; padding:8px 16px;">Sluiten</button>
+        </div>
+
+        <div class="settings-card">
+          <h2>Anthropic</h2>
+          <input type="password" id="s-api-key" placeholder="sk-ant-..." value="${escapeHtml(apiKey)}">
+          <select id="s-model"><option>Laden...</option></select>
+        </div>
+
+        <div class="settings-card">
+          <h2>Spotify Device</h2>
+          <div id="s-devices">${devicesHtml}</div>
+          <button class="btn-sm btn-gray" id="s-refresh-devices" style="margin-top:0.5rem;">Devices vernieuwen</button>
+        </div>
+
+        <div class="settings-card">
+          <h2>Spotify Account</h2>
+          ${token
+            ? '<button class="btn-sm btn-red" id="s-spotify-logout">Uitloggen</button>'
+            : '<button class="btn-sm btn-green" id="s-spotify-login">Inloggen</button>'
+          }
+        </div>
+
+        <button class="btn-sm btn-green" id="s-save" style="width:min(90vw,400px); padding:14px; border-radius:24px; margin-top:0.5rem;">Opslaan</button>
+      `;
+      document.body.appendChild(overlay);
+
+      // Load models
+      const models = await fetchModels(apiKey);
+      const select = document.getElementById("s-model");
+      if (models.length > 0) {
+        select.innerHTML = models.map(m =>
+          `<option value="${escapeHtml(m.id)}"${m.id === currentModel ? " selected" : ""}>${escapeHtml(m.display_name || m.id)}</option>`
+        ).join("");
+      } else {
+        select.innerHTML = `<option value="${escapeHtml(currentModel)}">${escapeHtml(currentModel)}</option>`;
+      }
+
+      // Device selection
+      overlay.querySelectorAll(".device-item").forEach(el => {
+        el.onclick = () => {
+          overlay.querySelectorAll(".device-item").forEach(d => {
+            d.classList.remove("selected");
+            d.querySelector("span")?.remove();
+          });
+          el.classList.add("selected");
+          const check = document.createElement("span");
+          check.style.color = "#1DB954";
+          check.innerHTML = "&#10003;";
+          el.appendChild(check);
+        };
+      });
+
+      document.getElementById("s-refresh-devices").onclick = async () => {
+        overlay.remove();
+        await renderSettings();
+      };
+
+      if (document.getElementById("s-spotify-logout")) {
+        document.getElementById("s-spotify-logout").onclick = () => {
+          localStorage.removeItem("spotify_access_token");
+          localStorage.removeItem("spotify_refresh_token");
+          localStorage.removeItem("spotify_expires_at");
+          localStorage.removeItem("preferred_device");
+          overlay.remove();
+          render();
+        };
+      }
+      if (document.getElementById("s-spotify-login")) {
+        document.getElementById("s-spotify-login").onclick = () => {
+          overlay.remove();
+          startSpotifyLogin();
+        };
+      }
+
+      document.getElementById("s-save").onclick = () => {
+        const newKey = document.getElementById("s-api-key").value.trim();
+        if (newKey && newKey.startsWith("sk-ant-")) {
+          localStorage.setItem("anthropic_key", newKey);
+        }
+        localStorage.setItem("anthropic_model", document.getElementById("s-model").value);
+        const selectedDevice = overlay.querySelector(".device-item.selected");
+        if (selectedDevice) {
+          localStorage.setItem("preferred_device", selectedDevice.dataset.deviceId);
+        }
+        overlay.remove();
+      };
+
+      document.getElementById("settings-close").onclick = () => overlay.remove();
+    }
+
+    function getPreferredDevice(devices) {
+      const preferred = localStorage.getItem("preferred_device");
+      if (preferred) {
+        const found = devices.find(d => d.id === preferred);
+        if (found) return found;
+      }
+      return devices.find(d => d.is_active) || devices[0];
+    }
+
+    // ── Playback Controls ───────────────────────────────────────────────────
+
+    let isPlaying = true;
+
+    async function togglePlayback() {
+      const token = await getSpotifyToken();
+      if (!token) return;
+      const endpoint = isPlaying ? "pause" : "play";
+      try {
+        const devices = await getDevices(token);
+        const device = getPreferredDevice(devices);
+        const url = device
+          ? `https://api.spotify.com/v1/me/player/${endpoint}?device_id=${device.id}`
+          : `https://api.spotify.com/v1/me/player/${endpoint}`;
+        await fetch(url, { method: "PUT", headers: { Authorization: `Bearer ${token}` } });
+        isPlaying = !isPlaying;
+        updatePlayPauseBtn();
+      } catch (err) {
+        document.getElementById("status").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
+      }
+    }
+
+    function updatePlayPauseBtn() {
+      const btn = document.getElementById("play-pause-btn");
+      if (!btn) return;
+      btn.innerHTML = isPlaying
+        ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>'
+        : '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>';
+    }
+
     // ── Camera Screen ────────────────────────────────────────────────────────
 
     function renderCamera() {
       app.innerHTML = `
+        <button class="settings-btn" id="open-settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+          </svg>
+        </button>
         <div class="camera-screen">
           <h1>LP Player</h1>
           <label class="capture-btn" for="photo">
@@ -361,6 +636,7 @@
         </div>
       `;
       document.getElementById("photo").onchange = handlePhoto;
+      document.getElementById("open-settings").onclick = renderSettings;
     }
 
     // ── Photo Handler + Image Resize ─────────────────────────────────────────
@@ -504,13 +780,14 @@
       const album = searchData.albums?.items?.[0];
       if (!album) throw new Error("Album niet gevonden op Spotify");
 
-      // Haal devices op en kies een niet-restricted device
+      // Haal devices op en kies preferred/actief/eerste device
       const devices = await getDevices(token);
       if (devices.length === 0) {
         throw new Error("Geen beschikbaar Spotify device. Open Spotify op een apparaat.");
       }
-      const device = devices.find(d => d.is_active) || devices[0];
+      const device = getPreferredDevice(devices);
       await playOnDevice(token, { context_uri: album.uri }, device.id);
+      isPlaying = true;
 
       const tracksResp = await fetch(
         `https://api.spotify.com/v1/albums/${album.id}/tracks?limit=50`,
@@ -522,15 +799,21 @@
       const result = document.getElementById("result");
       const status = document.getElementById("status");
       const img = album.images?.[1]?.url || album.images?.[0]?.url || "";
+      const spotifyUrl = album.external_urls?.spotify || "";
       status.textContent = "";
       result.innerHTML = `
         <div class="album-card">
-          ${img ? `<img src="${img}" alt="">` : ""}
-          <div class="info">
-            <h2>${escapeHtml(album.name)}</h2>
+          ${img ? `<a href="${spotifyUrl}" target="_blank" rel="noopener"><img src="${img}" alt="" style="cursor:pointer;"></a>` : ""}
+          <div class="info" style="flex:1;">
+            <a href="${spotifyUrl}" target="_blank" rel="noopener" style="color:inherit; text-decoration:none;">
+              <h2>${escapeHtml(album.name)}</h2>
+            </a>
             <p>${album.artists.map(a => escapeHtml(a.name)).join(", ")}</p>
             <p class="playing">Nu aan het spelen</p>
           </div>
+          <button class="play-pause" id="play-pause-btn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          </button>
         </div>
         <ul class="tracklist">
           ${tracks.map((t, i) => `
@@ -546,6 +829,8 @@
         </label>
         <input type="file" id="photo-new" accept="image/*" capture="environment" hidden>
       `;
+
+      document.getElementById("play-pause-btn").onclick = togglePlayback;
 
       result.querySelectorAll(".track").forEach(el => {
         el.onclick = () => playTrack(el.dataset.albumUri, parseInt(el.dataset.offset), el);
@@ -566,11 +851,13 @@
 
       try {
         const devices = await getDevices(token);
-        const device = devices.find(d => d.is_active) || devices[0];
+        const device = getPreferredDevice(devices);
         if (!device) throw new Error("Geen beschikbaar Spotify device.");
         await playOnDevice(token, { context_uri: albumUri, offset: { position: offset } }, device.id);
         document.querySelectorAll(".track.active").forEach(t => t.classList.remove("active"));
         el.classList.add("active");
+        isPlaying = true;
+        updatePlayPauseBtn();
       } catch (err) {
         document.getElementById("status").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
       }
