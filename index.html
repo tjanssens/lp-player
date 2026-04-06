@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1DB954">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>LP Player</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      background: #121212;
+      color: #fff;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .card {
+      background: #1e1e1e;
+      border-radius: 16px;
+      padding: 2rem;
+      width: min(90vw, 400px);
+      text-align: center;
+    }
+    .card h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .card p { color: #b3b3b3; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    .card input {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #333;
+      background: #282828;
+      color: #fff;
+      font-size: 1rem;
+      margin-bottom: 1rem;
+    }
+    .card button, .btn {
+      width: 100%;
+      padding: 14px;
+      border-radius: 24px;
+      border: none;
+      background: #1DB954;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .card button:active, .btn:active { opacity: 0.8; }
+    .camera-screen {
+      text-align: center;
+      width: min(90vw, 400px);
+    }
+    .camera-screen h1 {
+      font-size: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .capture-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 3rem 2rem;
+      border: 2px dashed #333;
+      border-radius: 16px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .capture-btn:active { border-color: #1DB954; }
+    .capture-btn span { font-size: 1rem; color: #b3b3b3; }
+    .status {
+      margin-top: 1.5rem;
+      font-size: 0.9rem;
+      color: #b3b3b3;
+      min-height: 1.5rem;
+    }
+    .result { margin-top: 1rem; }
+    .album-card {
+      background: #1e1e1e;
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-align: left;
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+    .album-card img {
+      width: 80px;
+      height: 80px;
+      border-radius: 8px;
+    }
+    .album-card .info h2 { font-size: 1rem; }
+    .album-card .info p { font-size: 0.85rem; color: #b3b3b3; }
+    .playing { color: #1DB954; font-size: 0.85rem; margin-top: 0.5rem; }
+    .error { color: #e74c3c; }
+    .tracklist {
+      list-style: none;
+      margin-top: 1rem;
+      background: #1e1e1e;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .track {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px;
+      gap: 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .track:active { background: #282828; }
+    .track.active { color: #1DB954; }
+    .track.active .track-nr { color: #1DB954; }
+    .track-nr {
+      width: 24px;
+      text-align: right;
+      font-size: 0.85rem;
+      color: #b3b3b3;
+      flex-shrink: 0;
+    }
+    .track-name {
+      flex: 1;
+      font-size: 0.95rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .track-dur {
+      font-size: 0.8rem;
+      color: #b3b3b3;
+      flex-shrink: 0;
+    }
+    .new-photo {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      border-style: solid;
+      border-width: 1px;
+    }
+    .new-photo span { color: #fff; }
+  </style>
+</head>
+<body>
+  <main id="app"></main>
+
+  <script>
+    const SPOTIFY_CLIENT_ID = "b5fe2dcf3e4b42d59f1123b54461c670";
+    const SPOTIFY_REDIRECT_URI = location.origin + location.pathname;
+    const SPOTIFY_SCOPES = "user-modify-playback-state user-read-playback-state";
+    const ANTHROPIC_MODEL = "claude-sonnet-4-5-20241022";
+
+    const app = document.getElementById("app");
+
+    // ── State Router ─────────────────────────────────────────────────────────
+
+    function getState() {
+      if (!localStorage.getItem("anthropic_key")) return "setup";
+      if (!localStorage.getItem("spotify_access_token")) return "login";
+      return "camera";
+    }
+
+    function render() {
+      const state = getState();
+      if (state === "setup") renderSetup();
+      else if (state === "login") renderLogin();
+      else renderCamera();
+    }
+
+    // ── Setup Screen ─────────────────────────────────────────────────────────
+
+    function renderSetup() {
+      app.innerHTML = `
+        <div class="card">
+          <h1>LP Player</h1>
+          <p>Voer je Anthropic API key in om te starten.</p>
+          <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off">
+          <button id="save-key">Opslaan</button>
+        </div>
+      `;
+      document.getElementById("save-key").onclick = () => {
+        const key = document.getElementById("api-key").value.trim();
+        if (!key.startsWith("sk-ant-")) return alert("Ongeldige key");
+        localStorage.setItem("anthropic_key", key);
+        render();
+      };
+    }
+
+    // ── Spotify OAuth PKCE ───────────────────────────────────────────────────
+
+    function generateCodeVerifier() {
+      const arr = new Uint8Array(64);
+      crypto.getRandomValues(arr);
+      return btoa(String.fromCharCode(...arr))
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+    async function generateCodeChallenge(verifier) {
+      const data = new TextEncoder().encode(verifier);
+      const hash = await crypto.subtle.digest("SHA-256", data);
+      return btoa(String.fromCharCode(...new Uint8Array(hash)))
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+    function renderLogin() {
+      app.innerHTML = `
+        <div class="card">
+          <h1>LP Player</h1>
+          <p>Log in op Spotify om muziek af te spelen.</p>
+          <button id="spotify-login">Inloggen met Spotify</button>
+        </div>
+      `;
+      document.getElementById("spotify-login").onclick = startSpotifyLogin;
+    }
+
+    async function startSpotifyLogin() {
+      const verifier = generateCodeVerifier();
+      sessionStorage.setItem("pkce_verifier", verifier);
+      const challenge = await generateCodeChallenge(verifier);
+      const params = new URLSearchParams({
+        client_id: SPOTIFY_CLIENT_ID,
+        response_type: "code",
+        redirect_uri: SPOTIFY_REDIRECT_URI,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        scope: SPOTIFY_SCOPES,
+      });
+      location.href = "https://accounts.spotify.com/authorize?" + params;
+    }
+
+    async function handleSpotifyCallback() {
+      const params = new URLSearchParams(location.search);
+      const code = params.get("code");
+      if (!code) return;
+
+      const verifier = sessionStorage.getItem("pkce_verifier");
+      if (!verifier) return;
+
+      const resp = await fetch("https://accounts.spotify.com/api/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: SPOTIFY_REDIRECT_URI,
+          client_id: SPOTIFY_CLIENT_ID,
+          code_verifier: verifier,
+        }),
+      });
+      const data = await resp.json();
+      if (data.access_token) {
+        localStorage.setItem("spotify_access_token", data.access_token);
+        localStorage.setItem("spotify_refresh_token", data.refresh_token);
+        localStorage.setItem("spotify_expires_at", Date.now() + data.expires_in * 1000);
+        sessionStorage.removeItem("pkce_verifier");
+        history.replaceState({}, "", location.pathname);
+      }
+    }
+
+    async function getSpotifyToken() {
+      const expiresAt = parseInt(localStorage.getItem("spotify_expires_at") || "0");
+      if (Date.now() < expiresAt - 60000) {
+        return localStorage.getItem("spotify_access_token");
+      }
+      const refreshToken = localStorage.getItem("spotify_refresh_token");
+      if (!refreshToken) { render(); return null; }
+
+      const resp = await fetch("https://accounts.spotify.com/api/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: SPOTIFY_CLIENT_ID,
+        }),
+      });
+      const data = await resp.json();
+      if (data.access_token) {
+        localStorage.setItem("spotify_access_token", data.access_token);
+        if (data.refresh_token) localStorage.setItem("spotify_refresh_token", data.refresh_token);
+        localStorage.setItem("spotify_expires_at", Date.now() + data.expires_in * 1000);
+        return data.access_token;
+      }
+      localStorage.removeItem("spotify_access_token");
+      localStorage.removeItem("spotify_refresh_token");
+      render();
+      return null;
+    }
+
+    // ── Camera Screen ────────────────────────────────────────────────────────
+
+    function renderCamera() {
+      app.innerHTML = `
+        <div class="camera-screen">
+          <h1>LP Player</h1>
+          <label class="capture-btn" for="photo">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+              <circle cx="12" cy="13" r="4"/>
+            </svg>
+            <span>Neem foto</span>
+          </label>
+          <input type="file" id="photo" accept="image/*" capture="environment" hidden>
+          <div id="status" class="status"></div>
+          <div id="result" class="result"></div>
+        </div>
+      `;
+      document.getElementById("photo").onchange = handlePhoto;
+    }
+
+    // ── Photo Handler + Image Resize ─────────────────────────────────────────
+
+    async function handlePhoto(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const status = document.getElementById("status");
+      const result = document.getElementById("result");
+      status.textContent = "Album herkennen...";
+      result.innerHTML = "";
+
+      try {
+        const base64 = await resizeAndEncode(file, 800);
+        const album = await identifyAlbum(base64);
+        if (!album) {
+          status.innerHTML = '<span class="error">Album niet herkend. Probeer opnieuw.</span>';
+          return;
+        }
+        status.textContent = `${album.name} — ${album.artist}. Afspelen...`;
+        await searchAndPlay(album.name, album.artist);
+      } catch (err) {
+        status.innerHTML = `<span class="error">${err.message}</span>`;
+      }
+      event.target.value = "";
+    }
+
+    function resizeAndEncode(file, maxWidth) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const scale = Math.min(1, maxWidth / img.width);
+          canvas.width = img.width * scale;
+          canvas.height = img.height * scale;
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.8).split(",")[1]);
+        };
+        img.src = URL.createObjectURL(file);
+      });
+    }
+
+    // ── Anthropic API — Album Identification ─────────────────────────────────
+
+    async function identifyAlbum(base64Image) {
+      const apiKey = localStorage.getItem("anthropic_key");
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: ANTHROPIC_MODEL,
+          max_tokens: 200,
+          messages: [{
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: { type: "base64", media_type: "image/jpeg", data: base64Image },
+              },
+              {
+                type: "text",
+                text: 'Identify the album and artist from this image. Reply ONLY with JSON: {"name": "album name", "artist": "artist name"}. If you cannot identify it, reply: {"name": null, "artist": null}',
+              },
+            ],
+          }],
+        }),
+      });
+      const data = await resp.json();
+      const text = data.content?.[0]?.text || "";
+      try {
+        const parsed = JSON.parse(text);
+        if (!parsed.name) return null;
+        return parsed;
+      } catch {
+        const match = text.match(/\{[^}]+\}/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          return parsed.name ? parsed : null;
+        }
+        return null;
+      }
+    }
+
+    // ── Spotify Search + Play + Tracklist ────────────────────────────────────
+
+    async function searchAndPlay(albumName, artist) {
+      const token = await getSpotifyToken();
+      if (!token) throw new Error("Spotify niet verbonden");
+
+      const query = encodeURIComponent(`${albumName} artist:${artist}`);
+      const searchResp = await fetch(
+        `https://api.spotify.com/v1/search?q=${query}&type=album&limit=1`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const searchData = await searchResp.json();
+      const album = searchData.albums?.items?.[0];
+      if (!album) throw new Error("Album niet gevonden op Spotify");
+
+      const playResp = await fetch("https://api.spotify.com/v1/me/player/play", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ context_uri: album.uri }),
+      });
+
+      if (playResp.status === 404) {
+        throw new Error("Geen actief Spotify device. Open Spotify op een apparaat.");
+      }
+      if (!playResp.ok && playResp.status !== 204) {
+        throw new Error("Kon niet afspelen op Spotify");
+      }
+
+      const tracksResp = await fetch(
+        `https://api.spotify.com/v1/albums/${album.id}/tracks?limit=50`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const tracksData = await tracksResp.json();
+      const tracks = tracksData.items || [];
+
+      const result = document.getElementById("result");
+      const status = document.getElementById("status");
+      const img = album.images?.[1]?.url || album.images?.[0]?.url || "";
+      status.textContent = "";
+      result.innerHTML = `
+        <div class="album-card">
+          ${img ? `<img src="${img}" alt="">` : ""}
+          <div class="info">
+            <h2>${album.name}</h2>
+            <p>${album.artists.map(a => a.name).join(", ")}</p>
+            <p class="playing">Nu aan het spelen</p>
+          </div>
+        </div>
+        <ul class="tracklist">
+          ${tracks.map((t, i) => `
+            <li class="track${i === 0 ? " active" : ""}" data-uri="${t.uri}" data-album-uri="${album.uri}" data-offset="${i}">
+              <span class="track-nr">${t.track_number}</span>
+              <span class="track-name">${t.name}</span>
+              <span class="track-dur">${formatDuration(t.duration_ms)}</span>
+            </li>
+          `).join("")}
+        </ul>
+        <label class="capture-btn new-photo" for="photo">
+          <span>Andere plaat</span>
+        </label>
+        <input type="file" id="photo" accept="image/*" capture="environment" hidden>
+      `;
+
+      result.querySelectorAll(".track").forEach(el => {
+        el.onclick = () => playTrack(el.dataset.albumUri, parseInt(el.dataset.offset), el);
+      });
+
+      document.getElementById("photo").onchange = handlePhoto;
+    }
+
+    function formatDuration(ms) {
+      const min = Math.floor(ms / 60000);
+      const sec = Math.floor((ms % 60000) / 1000);
+      return `${min}:${sec.toString().padStart(2, "0")}`;
+    }
+
+    async function playTrack(albumUri, offset, el) {
+      const token = await getSpotifyToken();
+      if (!token) return;
+
+      const resp = await fetch("https://api.spotify.com/v1/me/player/play", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ context_uri: albumUri, offset: { position: offset } }),
+      });
+
+      if (resp.ok || resp.status === 204) {
+        document.querySelectorAll(".track.active").forEach(t => t.classList.remove("active"));
+        el.classList.add("active");
+      }
+    }
+
+    // ── App Init ─────────────────────────────────────────────────────────────
+
+    handleSpotifyCallback().then(render);
+  </script>
+</body>
+</html>
