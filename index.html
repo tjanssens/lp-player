@@ -225,6 +225,21 @@
       flex-shrink: 0;
     }
     .play-pause:active { opacity: 0.8; }
+    .scan-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 16px;
+      margin-bottom: 1rem;
+      border: 1px solid #333;
+      border-radius: 24px;
+      color: #b3b3b3;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .scan-btn:active { border-color: #1DB954; color: #fff; }
   </style>
 </head>
 <body>
@@ -802,6 +817,14 @@
       const spotifyUrl = album.external_urls?.spotify || "";
       status.textContent = "";
       result.innerHTML = `
+        <label class="scan-btn" for="photo-new">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+            <circle cx="12" cy="13" r="4"/>
+          </svg>
+          Andere plaat
+        </label>
+        <input type="file" id="photo-new" accept="image/*" capture="environment" hidden>
         <div class="album-card">
           ${img ? `<a href="${spotifyUrl}" target="_blank" rel="noopener"><img src="${img}" alt="" style="cursor:pointer;"></a>` : ""}
           <div class="info" style="flex:1;">
@@ -824,14 +847,6 @@
             </li>
           `).join("")}
         </ul>
-        <label class="capture-btn" for="photo-new" style="margin-top:1.5rem;">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
-            <circle cx="12" cy="13" r="4"/>
-          </svg>
-          <span>Andere plaat</span>
-        </label>
-        <input type="file" id="photo-new" accept="image/*" capture="environment" hidden>
       `;
 
       document.getElementById("play-pause-btn").onclick = togglePlayback;
